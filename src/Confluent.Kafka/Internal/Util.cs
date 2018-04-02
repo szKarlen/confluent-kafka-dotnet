@@ -15,6 +15,7 @@
 // Refer to LICENSE for more information.
 
 using System;
+using System.Numerics;
 using System.Text;
 using SystemMarshal = System.Runtime.InteropServices.Marshal;
 using Unsafe = System.Runtime.CompilerServices.Unsafe;
@@ -31,8 +32,28 @@ namespace Confluent.Kafka.Internal
             /// </summary>
             public unsafe static string PtrToStringUTF8(IntPtr strPtr)
             {
-                // TODO: Is there a built in / vectorized / better way to implement this?              
+                // HW-accelerated Vector<T> intrinsics are available on RyuJIT starting from .NET 4.6 (netstandard1.3)
+                // The performance gain will be visible for messages with size of over 32 bytes (AVX2 instructions)
                 byte* pTraverse = (byte*)strPtr;
+
+                if (Vector.IsHardwareAccelerated)
+                {
+                    int offset = 0;
+                    Vector<byte> vTraverse;
+                    Vector<byte> vMask;
+
+                    // Use a mask
+                    do
+                    {
+                        pTraverse += offset;
+                        vTraverse = Unsafe.Read<Vector<byte>>(pTraverse);
+                        vMask = Vector.Equals(vTraverse, Vector<byte>.Zero);
+
+                        offset += Vector<byte>.Count;
+                    }
+                    while (vMask.Equals(Vector<byte>.Zero));
+                }
+
                 while (*pTraverse != 0) { pTraverse += 1; }
                 var length = (int)(pTraverse - (byte*)strPtr);
 #if NET45
